@@ -1,3 +1,4 @@
+import { traceable } from 'langsmith/traceable';
 import { AIProvider } from './provider';
 import { analyzeTrendModule } from './modules/TrendAnalyzer';
 import { generateCreatorAngleModule } from './modules/AngleGenerator';
@@ -29,12 +30,13 @@ export interface OrchestratorDeps {
   provider: AIProvider;
 }
 
-export async function generateContentPackage(
-  input: OrchestratorInput,
-  deps: OrchestratorDeps,
-  onStage?: (event: PipelineStageEvent) => void
-) {
-  const { provider } = deps;
+export const generateContentPackage = traceable(
+  async function generateContentPackage(
+    input: OrchestratorInput,
+    deps: OrchestratorDeps,
+    onStage?: (event: PipelineStageEvent) => void
+  ) {
+    const { provider } = deps;
 
   // STAGE 1: TREND ANALYSIS
   let trend = input.trendAnalysis;
@@ -131,4 +133,6 @@ export async function generateContentPackage(
     hashtags: captionData.hashtags,
     title: captionData.title || scriptData.title,
   };
-}
+},
+{ name: 'ContentPipeline.generateContentPackage' }
+);

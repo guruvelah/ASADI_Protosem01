@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { traceable } from 'langsmith/traceable';
 import { AIProvider, AICompletionOptions, AICompletionResult } from './provider';
 
 export class GeminiAIProvider implements AIProvider {
@@ -22,46 +23,52 @@ export class GeminiAIProvider implements AIProvider {
       throw new Error('GEMINI_API_KEY is not configured.');
     }
 
-    const startTime = Date.now();
-    const modelName = this.defaultModel;
+    const runCall = traceable(
+      async () => {
+        const startTime = Date.now();
+        const modelName = this.defaultModel;
 
-    const response = await this.client.models.generateContent({
-      model: modelName,
-      contents: prompt,
-      config: {
-        systemInstruction: options?.systemInstruction,
-        responseMimeType: 'application/json',
-        temperature: options?.temperature ?? 0.7,
+        const response = await this.client!.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            systemInstruction: options?.systemInstruction,
+            responseMimeType: 'application/json',
+            temperature: options?.temperature ?? 0.7,
+          },
+        });
+
+        const latencyMs = Date.now() - startTime;
+        const rawText = response.text || '';
+
+        const cleanedText = rawText
+          .replace(/^```json\s*/i, '')
+          .replace(/^```\s*/i, '')
+          .replace(/\s*```$/i, '')
+          .trim();
+
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(cleanedText);
+        } catch (e) {
+          throw new Error(`Invalid JSON output from Gemini model: ${cleanedText}`);
+        }
+
+        const data = validator(parsed);
+
+        const meta: AICompletionResult = {
+          text: rawText,
+          model: modelName,
+          latencyMs,
+          inputTokens: response.usageMetadata?.promptTokenCount,
+          outputTokens: response.usageMetadata?.candidatesTokenCount,
+        };
+
+        return { data, meta };
       },
-    });
+      { name: 'GeminiAIProvider.generateStructuredJSON', run_type: 'llm' }
+    );
 
-    const latencyMs = Date.now() - startTime;
-    const rawText = response.text || '';
-
-    // Strip markdown code fences if model returned ```json ... ```
-    const cleanedText = rawText
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(cleanedText);
-    } catch (e) {
-      throw new Error(`Invalid JSON output from Gemini model: ${cleanedText}`);
-    }
-
-    const data = validator(parsed);
-
-    const meta: AICompletionResult = {
-      text: rawText,
-      model: modelName,
-      latencyMs,
-      inputTokens: response.usageMetadata?.promptTokenCount,
-      outputTokens: response.usageMetadata?.candidatesTokenCount,
-    };
-
-    return { data, meta };
+    return runCall();
   }
 }
